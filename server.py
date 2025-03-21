@@ -2,29 +2,31 @@ import os
 import subprocess
 import webvtt
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from sumy.parsers.plaintext import PlaintextParser
 from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.lsa import LsaSummarizer
 
 app = Flask(__name__)
+CORS(app)  # Allow frontend to access API
 
-# Function to download subtitles
 def download_subtitles(video_url):
     command = [
         "yt-dlp", "--write-auto-sub", "--sub-lang", "en",
         "--sub-format", "vtt", "--skip-download",
         "-o", "subtitle.%(ext)s", video_url
     ]
-    subprocess.run(command, check=True)
+    try:
+        subprocess.run(command, check=True, timeout=120)  # Timeout to prevent hanging
+    except subprocess.TimeoutExpired:
+        raise Exception("Download timed out. Try another video.")
 
-# Function to extract text from VTT file
 def extract_text_from_vtt(file_path):
     transcript = []
     for caption in webvtt.read(file_path):
         transcript.append(caption.text)
     return " ".join(transcript)
 
-# Function to summarize text
 def summarize_text(text, num_sentences=5):
     parser = PlaintextParser.from_string(text, Tokenizer("english"))
     summarizer = LsaSummarizer()
@@ -40,13 +42,8 @@ def transcribe():
         return jsonify({"error": "Missing video_url"}), 400
 
     try:
-        # Download subtitles
         download_subtitles(video_url)
-
-        # Extract transcript
         transcript = extract_text_from_vtt("subtitle.en.vtt")
-
-        # Summarize transcript
         summary = summarize_text(transcript)
 
         return jsonify({"transcript": transcript, "summary": summary})
@@ -55,4 +52,5 @@ def transcribe():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    from waitress import serve  # Use a production-ready server
+    serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
